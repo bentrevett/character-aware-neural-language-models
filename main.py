@@ -24,8 +24,6 @@ EMBEDDING_DIM = 15
 FILTER_SIZES = [1,2,3,4,5,6]
 FILTER_CHANNELS = [filter_size * 25 for filter_size in FILTER_SIZES]
 HIGHWAY_LAYERS = 1
-HIDDEN_DIM = 300
-N_LAYERS = 2
 
 CHAR_NESTING = data.Field(batch_first=True, tokenize=list, init_token='<sos>', eos_token='<eos>')
 CHARS = data.NestedField(CHAR_NESTING)
@@ -64,9 +62,7 @@ model = models.CharLM(len(CHARS.vocab),
                       EMBEDDING_DIM,
                       FILTER_SIZES,
                       FILTER_CHANNELS,
-                      HIGHWAY_LAYERS,
-                      HIDDEN_DIM,
-                      N_LAYERS)
+                      HIGHWAY_LAYERS)
 
 print(model)
 
