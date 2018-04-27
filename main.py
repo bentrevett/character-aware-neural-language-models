@@ -128,6 +128,9 @@ for epoch in range(1, N_EPOCHS+1):
     #calculate metrics averaged across whole epoch
     valid_loss = epoch_loss / len(valid_iter)
 
+    #update learning rate
+    scheduler.step(math.exp(valid_loss))
+
     #print metrics
     print(f'Epoch: {epoch}') 
     print(f'Train Loss: {train_loss:.3f}, Valid PPL: {math.exp(train_loss):.2f}')
