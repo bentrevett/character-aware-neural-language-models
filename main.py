@@ -27,6 +27,7 @@ FILTER_CHANNELS = [filter_size * 25 for filter_size in FILTER_SIZES]
 HIGHWAY_LAYERS = 1
 RNN_DIM = 300
 RNN_LAYERS = 2
+DROPOUT = 0.5
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -67,7 +68,8 @@ model = models.CharLM(len(CHARS.vocab),
                       FILTER_CHANNELS,
                       HIGHWAY_LAYERS,
                       RNN_DIM,
-                      RNN_LAYERS)
+                      RNN_LAYERS,
+                      DROPOUT)
 
 print(model)
 
@@ -114,7 +116,9 @@ for epoch in range(1, N_EPOCHS+1):
     model.eval()
 
     for batch in tqdm(valid_iter, desc='Valid'):
+
         with torch.no_grad():
+            
             predictions = model(batch.chars)
 
             loss = criterion(predictions, batch.targets.view(-1,))
@@ -131,5 +135,21 @@ for epoch in range(1, N_EPOCHS+1):
 
     if valid_loss < best_valid_loss:
         best_valid_loss = valid_loss
-        torch.save(model.state_dict(), f'model_e-{epoch}-{math.exp(best_valid_loss):.2f}.pt')
+        torch.save(model.state_dict(), 'model.pt')
+
+model.load_state_dict(torch.load('model.pt'))
         
+for batch in tqdm(test_iter, desc='Valid'):
+
+        with torch.no_grad():
+
+            predictions = model(batch.chars)
+
+            loss = criterion(predictions, batch.targets.view(-1,))
+            
+            epoch_loss += loss.item()
+
+#calculate metrics averaged across whole epoch
+test_loss = epoch_loss / len(test_iter)
+
+print(f'Test Loss: {test_loss:.3f}, Test PPL: {math.exp(test_loss):.2f}')

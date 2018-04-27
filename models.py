@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class CharLM(nn.Module):
-    def __init__(self, input_dim, output_dim, embedding_dim, filter_sizes, filter_channels, highway_layers, rnn_dim, rnn_layers):
+    def __init__(self, input_dim, output_dim, embedding_dim, filter_sizes, filter_channels, highway_layers, rnn_dim, rnn_layers, dropout):
         super().__init__()
 
         self.embedding = TimeDistributed(nn.Embedding(input_dim, embedding_dim))
@@ -19,7 +19,7 @@ class CharLM(nn.Module):
 
         self.highway = TimeDistributed(Highway(sum(filter_channels), 1, F.relu))
 
-        self.rnn = nn.LSTM(sum(filter_channels), rnn_dim, rnn_layers)
+        self.rnn = nn.LSTM(sum(filter_channels), rnn_dim, rnn_layers, dropout=dropout)
 
         self.fc = nn.Linear(rnn_dim, output_dim)
 
