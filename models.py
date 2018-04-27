@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class CharLM(nn.Module):
-    def __init__(self, input_dim, output_dim, embedding_dim, filter_sizes, filter_channels, highway_layers, hidden_dim, n_layers):
+    def __init__(self, input_dim, output_dim, embedding_dim, filter_sizes, filter_channels, highway_layers, rnn_dim, rnn_layers):
         super().__init__()
 
         self.embedding = TimeDistributed(nn.Embedding(input_dim, embedding_dim))
@@ -15,54 +15,62 @@ class CharLM(nn.Module):
         self.cnn3 = TimeDistributed(nn.Conv2d(1, filter_channels[2], (filter_sizes[2], embedding_dim)))
         self.cnn4 = TimeDistributed(nn.Conv2d(1, filter_channels[3], (filter_sizes[3], embedding_dim)))
         self.cnn5 = TimeDistributed(nn.Conv2d(1, filter_channels[4], (filter_sizes[4], embedding_dim)))
+        self.cnn6 = TimeDistributed(nn.Conv2d(1, filter_channels[5], (filter_sizes[5], embedding_dim)))
 
-        #self.cnn_max = TimeDistributed(nn.MaxPool2d())
+        self.highway = TimeDistributed(Highway(sum(filter_channels), 1, F.relu))
+
+        self.rnn = nn.LSTM(sum(filter_channels), rnn_dim, rnn_layers)
+
+        self.fc = nn.Linear(rnn_dim, output_dim)
 
     def forward(self, chars):
-
-        print(chars.shape)
 
         #chars = [bsz, seq. len, n_chars]
 
         embedded_chars = self.embedding(chars)
 
-        print(embedded_chars.shape)
-
         #embedded_chars = [bsz, seq len, n_chars, emb dim]
 
         embedded_chars = embedded_chars.unsqueeze(2) #need to add a dummy 'channel' dimension
 
-        print(embedded_chars.shape)
-
-        #embedded_chars = [bsz,seq len, 1, n_chars * emb dim]
+        #embedded_chars = [bsz, seq len, 1, n_chars, emb dim]
 
         cnn1_output = F.tanh(self.cnn1(embedded_chars).squeeze(-1))
         cnn2_output = F.tanh(self.cnn2(embedded_chars).squeeze(-1))
         cnn3_output = F.tanh(self.cnn3(embedded_chars).squeeze(-1))
         cnn4_output = F.tanh(self.cnn4(embedded_chars).squeeze(-1))
         cnn5_output = F.tanh(self.cnn5(embedded_chars).squeeze(-1))
+        cnn6_output = F.tanh(self.cnn6(embedded_chars).squeeze(-1))
 
-        print(cnn1_output.shape)
-
-        #each cnn_output = [bsz, seq len, n_filters[i], n_chars-filter_width[i]]        
+        #each cnn_output = [bsz, seq len, n_filters[i], n_chars-(filter_width[i]-1)]        
 
         cnn1_max = F.max_pool2d(cnn1_output, (1, cnn1_output.shape[3])).squeeze(-1) 
         cnn2_max = F.max_pool2d(cnn2_output, (1, cnn2_output.shape[3])).squeeze(-1) 
         cnn3_max = F.max_pool2d(cnn3_output, (1, cnn3_output.shape[3])).squeeze(-1) 
         cnn4_max = F.max_pool2d(cnn4_output, (1, cnn4_output.shape[3])).squeeze(-1) 
         cnn5_max = F.max_pool2d(cnn5_output, (1, cnn5_output.shape[3])).squeeze(-1) 
-
-        print(cnn1_max.shape)
+        cnn6_max = F.max_pool2d(cnn6_output, (1, cnn6_output.shape[3])).squeeze(-1)
         
         #each cnn_max = [bsz, seq len, n_filters[i]]
 
-        cnns_max = torch.cat((cnn1_max, cnn2_max, cnn3_max, cnn4_max, cnn5_max), dim=2)
+        cnns_max = torch.cat((cnn1_max, cnn2_max, cnn3_max, cnn4_max, cnn5_max, cnn6_max), dim=2)
 
         #cnns_max = [bsz, seq len, sum(n_filters)] 
 
-        print(cnns_max.shape)
+        highway_output = self.highway(cnns_max)
 
-        assert 1 == 2
+        #highway_output = [bsz, seq len, sum(n_filters)]
+
+        output, (hidden, cell) = self.rnn(highway_output)
+
+        #output = [seq len, bsz, rnn_dim]
+
+        decoded = self.fc(output.view(output.size(0)*output.size(1), output.size(2))) 
+        
+        #decoded = [seq len * bsz, output_dim]
+
+        return decoded
+
 
 class TimeDistributed(nn.Module):
     """
@@ -96,3 +104,49 @@ class TimeDistributed(nn.Module):
         outputs = reshaped_outputs.contiguous().view(*new_shape)
 
         return outputs
+
+class Highway(torch.nn.Module):
+    """
+    A `Highway layer <https://arxiv.org/abs/1505.00387>`_ does a gated combination of a linear
+    transformation and a non-linear transformation of its input.  :math:`y = g * x + (1 - g) *
+    f(A(x))`, where :math:`A` is a linear transformation, :math:`f` is an element-wise
+    non-linearity, and :math:`g` is an element-wise gate, computed as :math:`sigmoid(B(x))`.
+    This module will apply a fixed number of highway layers to its input, returning the final
+    result.
+    Parameters
+    ----------
+    input_dim : ``int``
+        The dimensionality of :math:`x`.  We assume the input has shape ``(batch_size,
+        input_dim)``.
+    num_layers : ``int``, optional (default=``1``)
+        The number of highway layers to apply to the input.
+    activation : ``Callable[[torch.Tensor], torch.Tensor]``, optional (default=``torch.nn.functional.relu``)
+        The non-linearity to use in the highway layers.
+    """
+    def __init__(self, input_dim, num_layers = 1, activation = torch.nn.functional.relu):
+        super(Highway, self).__init__()
+        self._input_dim = input_dim
+        self._layers = torch.nn.ModuleList([torch.nn.Linear(input_dim, input_dim * 2)
+                                            for _ in range(num_layers)])
+        self._activation = activation
+        for layer in self._layers:
+            # We should bias the highway layer to just carry its input forward.  We do that by
+            # setting the bias on `B(x)` to be positive, because that means `g` will be biased to
+            # be high, to we will carry the input forward.  The bias on `B(x)` is the second half
+            # of the bias vector in each Linear layer.
+            layer.bias[input_dim:].data.fill_(1)
+
+
+    def forward(self, inputs):
+        current_input = inputs
+        for layer in self._layers:
+            projected_input = layer(current_input)
+            linear_part = current_input
+            # NOTE: if you modify this, think about whether you should modify the initialization
+            # above, too.
+            nonlinear_part = projected_input[:, (0 * self._input_dim):(1 * self._input_dim)]
+            gate = projected_input[:, (1 * self._input_dim):(2 * self._input_dim)]
+            nonlinear_part = self._activation(nonlinear_part)
+            gate = torch.nn.functional.sigmoid(gate)
+            current_input = gate * linear_part + (1 - gate) * nonlinear_part
+        return current_input

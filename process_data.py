@@ -13,7 +13,7 @@ def process_ptb(in_filename, out_filename):
     examples = []
 
     for i, _ in enumerate(data[:-BPTT-1]):
-        examples.append({'words':data[i:i+BPTT], 'target':data[i+BPTT]})
+        examples.append({'words':data[i:i+BPTT], 'targets': data[i+1:i+BPTT+1]})
 
     with open(f'{out_filename}', 'w') as w:
         for example in examples:
